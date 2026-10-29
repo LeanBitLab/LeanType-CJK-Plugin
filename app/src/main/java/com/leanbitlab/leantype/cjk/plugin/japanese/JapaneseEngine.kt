@@ -11,6 +11,7 @@ import helium314.keyboard.latin.cjk.CjkContextData
 class JapaneseEngine(private val dictionary: JapaneseDictionary) {
 
     private val rawBuffer = StringBuilder()
+    private var rawCursor = 0
     private var pendingCommit: String? = null
     private var cachedContext: CjkContextData? = null
     private var currentReading: String = ""
@@ -19,15 +20,57 @@ class JapaneseEngine(private val dictionary: JapaneseDictionary) {
 
     fun processKey(keysym: Int, mask: Int): Boolean {
         when (keysym) {
-            XK_BACKSPACE -> {
+            XK_LEFT -> {
                 if (rawBuffer.isNotEmpty()) {
-                    rawBuffer.deleteCharAt(rawBuffer.length - 1)
-                    if (rawBuffer.isEmpty()) {
-                        clearComposition()
-                    } else {
+                    if (rawCursor > 0) {
+                        rawCursor--
                         updateContext()
                     }
                     return true
+                }
+                return false
+            }
+
+            XK_RIGHT -> {
+                if (rawBuffer.isNotEmpty()) {
+                    if (rawCursor < rawBuffer.length) {
+                        rawCursor++
+                        updateContext()
+                    }
+                    return true
+                }
+                return false
+            }
+
+            XK_BACKSPACE -> {
+                if (rawBuffer.isNotEmpty()) {
+                    if (rawCursor > 0) {
+                        rawBuffer.deleteCharAt(rawCursor - 1)
+                        rawCursor--
+                        if (rawBuffer.isEmpty()) {
+                            clearComposition()
+                        } else {
+                            updateContext()
+                        }
+                        return true
+                    }
+                    return false
+                }
+                return false
+            }
+
+            XK_DELETE -> {
+                if (rawBuffer.isNotEmpty()) {
+                    if (rawCursor < rawBuffer.length) {
+                        rawBuffer.deleteCharAt(rawCursor)
+                        if (rawBuffer.isEmpty()) {
+                            clearComposition()
+                        } else {
+                            updateContext()
+                        }
+                        return true
+                    }
+                    return false
                 }
                 return false
             }
@@ -65,7 +108,8 @@ class JapaneseEngine(private val dictionary: JapaneseDictionary) {
             in 'a'.code..'z'.code, in 'A'.code..'Z'.code,
             '-'.code, ','.code, '.'.code, '?'.code, '!'.code, '\''.code, '~'.code -> {
                 val ch = if (keysym in 'A'.code..'Z'.code) (keysym + 32).toByte() else keysym.toByte()
-                rawBuffer.append(ch.toInt().toChar())
+                rawBuffer.insert(rawCursor, ch.toInt().toChar())
+                rawCursor++
                 updateContext()
                 return true
             }
@@ -99,6 +143,7 @@ class JapaneseEngine(private val dictionary: JapaneseDictionary) {
 
     fun clearComposition() {
         rawBuffer.clear()
+        rawCursor = 0
         cachedContext = null
         currentReading = ""
     }
@@ -111,7 +156,13 @@ class JapaneseEngine(private val dictionary: JapaneseDictionary) {
         }
 
         val conv = RomajiConverter.convert(rawBuffer.toString(), finalize = false)
-        val preeditDisplay = if (conv.pending == "n") conv.kana + "ん" else conv.fullDisplay
+        val baseDisplay = if (conv.pending == "n") conv.kana + "ん" else conv.fullDisplay
+        val preeditDisplay = if (rawCursor in 0 until rawBuffer.length) {
+            val cursorKanaPos = minOf(rawCursor, baseDisplay.length)
+            StringBuilder(baseDisplay).insert(cursorKanaPos, '|').toString()
+        } else {
+            baseDisplay
+        }
 
         // Reading used for dictionary lookups (trailing single 'n' treated as 'ん')
         val queryReading = if (conv.pending == "n") conv.kana + "ん" else conv.kana + conv.pending
@@ -191,5 +242,8 @@ class JapaneseEngine(private val dictionary: JapaneseDictionary) {
         private const val XK_BACKSPACE = 0xff08
         private const val XK_RETURN = 0xff0d
         private const val XK_SPACE = 0x0020
+        private const val XK_DELETE = 0xffff
+        private const val XK_LEFT = 0xff51
+        private const val XK_RIGHT = 0xff53
     }
 }

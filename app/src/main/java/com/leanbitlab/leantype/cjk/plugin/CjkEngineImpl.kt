@@ -19,6 +19,8 @@ class CjkEngineImpl : ICjkEngine {
 
     // Chinese Pinyin Engine state
     private val pinyinBuffer = StringBuilder()
+    private var pinyinCursor = 0
+    private var lastPinyinCandidateCount = 0
     private var pendingPinyinCommit: String? = null
     private var cachedPinyinContext: CjkContextData? = null
 
@@ -106,16 +108,59 @@ class CjkEngineImpl : ICjkEngine {
 
         // Chinese Pinyin processing
         when (keysym) {
-            XK_BACKSPACE -> {
+            XK_LEFT -> {
                 if (pinyinBuffer.isNotEmpty()) {
-                    pinyinBuffer.deleteCharAt(pinyinBuffer.length - 1)
-                    if (pinyinBuffer.isEmpty()) {
-                        clearComposition()
-                    } else {
-                        val count = PinyinDecoderJni.nativeSearch(pinyinBuffer.toString())
-                        updatePinyinContext(count)
+                    if (pinyinCursor > 0) {
+                        pinyinCursor--
+                        updatePinyinContext(lastPinyinCandidateCount)
                     }
                     return true
+                }
+                return false
+            }
+
+            XK_RIGHT -> {
+                if (pinyinBuffer.isNotEmpty()) {
+                    if (pinyinCursor < pinyinBuffer.length) {
+                        pinyinCursor++
+                        updatePinyinContext(lastPinyinCandidateCount)
+                    }
+                    return true
+                }
+                return false
+            }
+
+            XK_BACKSPACE -> {
+                if (pinyinBuffer.isNotEmpty()) {
+                    if (pinyinCursor > 0) {
+                        pinyinBuffer.deleteCharAt(pinyinCursor - 1)
+                        pinyinCursor--
+                        if (pinyinBuffer.isEmpty()) {
+                            clearComposition()
+                        } else {
+                            val count = searchCurrentPinyin()
+                            updatePinyinContext(count)
+                        }
+                        return true
+                    }
+                    return false
+                }
+                return false
+            }
+
+            XK_DELETE -> {
+                if (pinyinBuffer.isNotEmpty()) {
+                    if (pinyinCursor < pinyinBuffer.length) {
+                        pinyinBuffer.deleteCharAt(pinyinCursor)
+                        if (pinyinBuffer.isEmpty()) {
+                            clearComposition()
+                        } else {
+                            val count = searchCurrentPinyin()
+                            updatePinyinContext(count)
+                        }
+                        return true
+                    }
+                    return false
                 }
                 return false
             }
@@ -148,10 +193,34 @@ class CjkEngineImpl : ICjkEngine {
             // Letters 'a'..'z', 'A'..'Z', or single quote '\'' delimiter
             in 'a'.code..'z'.code, in 'A'.code..'Z'.code, '\''.code -> {
                 val ch = if (keysym in 'A'.code..'Z'.code) (keysym + 32).toByte() else keysym.toByte()
-                pinyinBuffer.append(ch.toInt().toChar())
-                val count = PinyinDecoderJni.nativeSearch(pinyinBuffer.toString())
+                pinyinBuffer.insert(pinyinCursor, ch.toInt().toChar())
+                pinyinCursor++
+                val count = searchCurrentPinyin()
                 updatePinyinContext(count)
                 return true
+            }
+
+            // Punctuation handling during active composition: commit candidate 0 + Chinese punctuation
+            ','.code, '.'.code, '!'.code, '?'.code, ':'.code, ';'.code,
+            0xff0c /* ， */, 0x3002 /* 。 */, 0xff01 /* ！ */, 0xff1f /* ？ */,
+            0xff1a /* ： */, 0xff1b /* ； */, 0x3001 /* 、 */ -> {
+                if (pinyinBuffer.isNotEmpty()) {
+                    val topCandidate = cachedPinyinContext?.candidates?.firstOrNull()?.text ?: pinyinBuffer.toString()
+                    val punctChar = when (keysym) {
+                        ','.code, 0xff0c -> "，"
+                        '.'.code, 0x3002 -> "。"
+                        '!'.code, 0xff01 -> "！"
+                        '?'.code, 0xff1f -> "？"
+                        ':'.code, 0xff1a -> "："
+                        ';'.code, 0xff1b -> "；"
+                        0x3001 -> "、"
+                        else -> keysym.toChar().toString()
+                    }
+                    pendingPinyinCommit = topCandidate + punctChar
+                    clearComposition()
+                    return true
+                }
+                return false
             }
         }
 
@@ -213,6 +282,8 @@ class CjkEngineImpl : ICjkEngine {
             japaneseEngine?.clearComposition()
         } else {
             pinyinBuffer.clear()
+            pinyinCursor = 0
+            lastPinyinCandidateCount = 0
             cachedPinyinContext = null
             if (isPinyinReady) {
                 PinyinDecoderJni.nativeResetSearch()
@@ -271,6 +342,28 @@ class CjkEngineImpl : ICjkEngine {
         }
     }
 
+    private fun searchCurrentPinyin(): Int {
+        if (pinyinBuffer.isEmpty()) {
+            lastPinyinCandidateCount = 0
+            return 0
+        }
+        val query = normalizePinyin(pinyinBuffer.toString())
+        val count = PinyinDecoderJni.nativeSearch(query)
+        lastPinyinCandidateCount = count
+        return count
+    }
+
+    private fun normalizePinyin(raw: String): String {
+        if (raw.isEmpty()) return raw
+        // 1. Map [ln]ve -> [ln]ue (e.g. lve -> lue, nve -> nue, lvexian -> luexian)
+        var s = REGEX_L_N_VE.replace(raw, "$1ue")
+        // 2. Map [jqxy]v -> [jqxy]u (e.g. jv -> ju, qv -> qu, xv -> xu, yv -> yu, xve -> xue)
+        s = REGEX_J_Q_X_Y_V.replace(s, "$1u")
+        // 3. Map isolated v at start of word or after syllable delimiter ' (e.g. v -> yu, ve -> yue, van -> yuan, vn -> yun)
+        s = REGEX_ISOLATED_V.replace(s, "$1yu")
+        return s
+    }
+
     private fun updatePinyinContext(candidateCount: Int) {
         if (pinyinBuffer.isEmpty()) {
             cachedPinyinContext = null
@@ -278,6 +371,13 @@ class CjkEngineImpl : ICjkEngine {
         }
 
         val pyStr = PinyinDecoderJni.nativeGetPyStr(false)
+        val base = if (pyStr.isNotEmpty() && pyStr.length == pinyinBuffer.length) pyStr else pinyinBuffer.toString()
+        val preeditDisplay = if (pinyinCursor in 0 until base.length) {
+            StringBuilder(base).insert(pinyinCursor, '|').toString()
+        } else {
+            base
+        }
+
         val maxFetch = if (candidateCount > 0) minOf(candidateCount, MAX_CANDIDATES_PER_PAGE) else 0
         val candidateList = ArrayList<CjkCandidate>(maxFetch)
 
@@ -289,7 +389,7 @@ class CjkEngineImpl : ICjkEngine {
         }
 
         cachedPinyinContext = CjkContextData(
-            preedit = if (pyStr.isNotEmpty()) pyStr else pinyinBuffer.toString(),
+            preedit = preeditDisplay,
             candidates = candidateList,
             selectedIndex = 0,
             hasPrevPage = false,
@@ -308,5 +408,12 @@ class CjkEngineImpl : ICjkEngine {
         private const val XK_BACKSPACE = 0xff08
         private const val XK_RETURN = 0xff0d
         private const val XK_SPACE = 0x0020
+        private const val XK_DELETE = 0xffff
+        private const val XK_LEFT = 0xff51
+        private const val XK_RIGHT = 0xff53
+
+        private val REGEX_L_N_VE = Regex("([lnLN])ve")
+        private val REGEX_J_Q_X_Y_V = Regex("([jqxyJQXY])v")
+        private val REGEX_ISOLATED_V = Regex("(^|')v")
     }
 }
