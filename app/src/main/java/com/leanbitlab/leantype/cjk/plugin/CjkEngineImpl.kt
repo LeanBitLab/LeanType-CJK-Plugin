@@ -176,7 +176,14 @@ class CjkEngineImpl : ICjkEngine {
 
             XK_SPACE -> {
                 if (pinyinBuffer.isNotEmpty()) {
-                    return selectCandidate(0)
+                    val candidates = cachedPinyinContext?.candidates
+                    if (!candidates.isNullOrEmpty()) {
+                        return selectCandidate(0)
+                    } else {
+                        pendingPinyinCommit = pinyinBuffer.toString()
+                        clearComposition()
+                        return true
+                    }
                 }
                 return false
             }
@@ -192,8 +199,8 @@ class CjkEngineImpl : ICjkEngine {
 
             // Letters 'a'..'z', 'A'..'Z', or single quote '\'' delimiter
             in 'a'.code..'z'.code, in 'A'.code..'Z'.code, '\''.code -> {
-                val ch = if (keysym in 'A'.code..'Z'.code) (keysym + 32).toByte() else keysym.toByte()
-                pinyinBuffer.insert(pinyinCursor, ch.toInt().toChar())
+                val ch = keysym.toChar()
+                pinyinBuffer.insert(pinyinCursor, ch)
                 pinyinCursor++
                 val count = searchCurrentPinyin()
                 updatePinyinContext(count)
@@ -258,6 +265,11 @@ class CjkEngineImpl : ICjkEngine {
         if (index !in candidates.indices) return false
 
         val chosenText = candidates[index].text
+        if (chosenText == pinyinBuffer.toString()) {
+            pendingPinyinCommit = chosenText
+            clearComposition()
+            return true
+        }
         val newCandCount = PinyinDecoderJni.nativeChoose(index)
         val fixedLen = PinyinDecoderJni.nativeGetFixedLen()
         val pyStr = PinyinDecoderJni.nativeGetPyStr(false)
@@ -347,7 +359,7 @@ class CjkEngineImpl : ICjkEngine {
             lastPinyinCandidateCount = 0
             return 0
         }
-        val query = normalizePinyin(pinyinBuffer.toString())
+        val query = normalizePinyin(pinyinBuffer.toString().lowercase())
         val count = PinyinDecoderJni.nativeSearch(query)
         lastPinyinCandidateCount = count
         return count
@@ -370,8 +382,13 @@ class CjkEngineImpl : ICjkEngine {
             return
         }
 
+        val raw = pinyinBuffer.toString()
         val pyStr = PinyinDecoderJni.nativeGetPyStr(false)
-        val base = if (pyStr.isNotEmpty() && pyStr.length == pinyinBuffer.length) pyStr else pinyinBuffer.toString()
+        val base = if (pyStr.isNotEmpty() && pyStr.replace("'", "").length == raw.length) {
+            applyCasing(pyStr, raw)
+        } else {
+            raw
+        }
         val preeditDisplay = if (pinyinCursor in 0 until base.length) {
             StringBuilder(base).insert(pinyinCursor, '|').toString()
         } else {
@@ -379,12 +396,23 @@ class CjkEngineImpl : ICjkEngine {
         }
 
         val maxFetch = if (candidateCount > 0) minOf(candidateCount, MAX_CANDIDATES_PER_PAGE) else 0
-        val candidateList = ArrayList<CjkCandidate>(maxFetch)
+        val candidateList = ArrayList<CjkCandidate>(maxFetch + 1)
 
         for (i in 0 until maxFetch) {
             val candText = PinyinDecoderJni.nativeGetCandidate(i)
             if (!candText.isNullOrEmpty()) {
                 candidateList.add(CjkCandidate(index = i, text = candText, comment = null))
+            }
+        }
+
+        // If no Chinese candidates were found or raw buffer has uppercase letters, include raw text as fallback candidate
+        if (candidateList.isEmpty() || raw.any { it.isUpperCase() }) {
+            if (!candidateList.any { it.text == raw }) {
+                if (candidateList.isEmpty()) {
+                    candidateList.add(CjkCandidate(index = 0, text = raw, comment = null))
+                } else {
+                    candidateList.add(CjkCandidate(index = candidateList.size, text = raw, comment = null))
+                }
             }
         }
 
@@ -395,6 +423,24 @@ class CjkEngineImpl : ICjkEngine {
             hasPrevPage = false,
             hasNextPage = candidateCount > MAX_CANDIDATES_PER_PAGE
         )
+    }
+
+    private fun applyCasing(segmented: String, rawWithCase: String): String {
+        val sb = StringBuilder(segmented.length)
+        var rawIdx = 0
+        for (i in segmented.indices) {
+            val c = segmented[i]
+            if (c == '\'') {
+                sb.append(c)
+            } else if (rawIdx < rawWithCase.length) {
+                val orig = rawWithCase[rawIdx]
+                sb.append(if (orig.isUpperCase()) c.uppercaseChar() else c.lowercaseChar())
+                rawIdx++
+            } else {
+                sb.append(c)
+            }
+        }
+        return sb.toString()
     }
 
     companion object {
