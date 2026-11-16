@@ -8,6 +8,7 @@ LeanType keeps its core APK bloat-free by modularizing large language dictionari
 
 ### Key Highlights
 - **Chinese and Japanese**: Chinese Pinyin through the Google Pinyin engine, and Japanese romaji input with kana-to-kanji candidates from an offline SKK-based dictionary.
+- **Korean needs no plugin**: Korean typing uses LeanType's built-in Hangul input, so this plugin only covers Chinese and Japanese.
 - **In-process Modular Loading**: Loaded dynamically into LeanType via `DexClassLoader` with strict ABI matching (`arm64-v8a`, `armeabi-v7a`, `x86_64`).
 - **Tiny Footprint**: Native shared library is under 400 KB per ABI; embedded dictionary is ~1 MB. Split APKs are ~1.7 to 1.9 MB each.
 - **Zero Latency**: Real-time N-gram candidate generation, matrix search, and syllable splitting running fully offline with zero telemetry or network permissions.
