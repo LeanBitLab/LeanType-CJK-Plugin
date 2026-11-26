@@ -9,8 +9,8 @@ LeanType keeps its core APK bloat-free by modularizing large language dictionari
 ### Key Highlights
 - **Chinese and Japanese**: Chinese Pinyin through the Google Pinyin engine, and Japanese romaji input with kana-to-kanji candidates from an offline SKK-based dictionary.
 - **Korean needs no plugin**: Korean typing uses LeanType's built-in Hangul input, so this plugin only covers Chinese and Japanese.
-- **In-process Modular Loading**: Loaded dynamically into LeanType via `DexClassLoader` with strict ABI matching (`arm64-v8a`, `armeabi-v7a`, `x86_64`).
-- **Tiny Footprint**: Native shared library is under 400 KB per ABI; embedded dictionary is ~1 MB. Split APKs are ~1.7 to 1.9 MB each.
+- **In-process Modular Loading**: Loaded dynamically into LeanType via `DexClassLoader` with strict ABI matching (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`).
+- **Small Footprint**: Split APKs are about 3.5 MB each. The bundled dictionaries are about 1 MB (Pinyin) and 10 MB (Japanese) uncompressed.
 - **Zero Latency**: Real-time N-gram candidate generation, matrix search, and syllable splitting running fully offline with zero telemetry or network permissions.
 - **Android 14+ W^X Compliant**: Native libraries and dictionary files are unpacked to private, read-only storage before loading.
 
@@ -37,17 +37,18 @@ Build split APKs:
 ./gradlew assembleRelease
 ```
 
-Generated APKs (`app/build/outputs/apk/release/`):
-- `cjk_plugin-arm64-v8a.apk` (~1.9 MB)
-- `cjk_plugin-armeabi-v7a.apk` (~1.7 MB)
-- `cjk_plugin-x86_64.apk` (~1.9 MB)
-- `cjk_plugin-universal.apk` (~2.5 MB)
+Generated APKs (`app/build/outputs/apk/release/`), about 3.5 MB each:
+- `cjk_plugin-arm64-v8a.apk`
+- `cjk_plugin-armeabi-v7a.apk`
+- `cjk_plugin-x86.apk`
+- `cjk_plugin-x86_64.apk`
 
 ## Installation
 
-Install the companion plugin alongside LeanType:
-```bash
-adb install -r app/build/outputs/apk/release/cjk_plugin-arm64-v8a.apk
-```
+The plugin is loaded into LeanType from a file; it does not need to be installed as an app.
 
-LeanType automatically detects the installed package `com.leanbitlab.leantype.cjk.plugin` on startup and enables full-vocabulary Chinese Pinyin input.
+1. Open **Settings → Plugins → CJK Input** in LeanType.
+2. In the Standard flavor you can download the plugin there. In the Offline flavor, download the APK for your device from the [releases page](https://github.com/LeanBitLab/LeanType-CJK-Plugin/releases/latest) and load it on that screen.
+3. Add Chinese or Japanese under **Settings → Languages & Layouts**.
+
+For a local build, copy the APK to the device and load it the same way.
