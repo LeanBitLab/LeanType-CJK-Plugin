@@ -30,6 +30,37 @@ class JapaneseEngineTest {
     }
 
     @Test
+    fun testKanaInputSkipsRomajiRules() {
+        // doubled kana must not become a small tsu, as doubled consonants do in romaji
+        assertEquals("はは", RomajiConverter.convert("はは", finalize = true).kana)
+        assertEquals("ああ", RomajiConverter.convert("ああ", finalize = false).kana)
+        assertEquals("がっこう、。", RomajiConverter.convert("がっこう、。", finalize = true).kana)
+        assertEquals("", RomajiConverter.convert("らー", finalize = false).pending)
+
+        val dictFile = if (File("src/main/assets/dict_japanese.dat").exists()) {
+            File("src/main/assets/dict_japanese.dat")
+        } else {
+            File("app/src/main/assets/dict_japanese.dat")
+        }
+        val dict = JapaneseDictionary()
+        assertTrue(dict.init(dictFile, File.createTempFile("test_usr_ja_kana", ".dat").apply { deleteOnExit() }))
+        val engine = JapaneseEngine(dict)
+
+        for (c in "にほんご") assertTrue(engine.processKey(c.code, 0))
+        assertTrue(engine.processKey(0xff08, 0)) // backspace removes one whole kana
+        val ctx = engine.getContext()!!
+        assertEquals("にほん", ctx.preedit)
+        assertTrue(ctx.candidates.map { it.text }.containsAll(listOf("日本", "にほん", "ニホン")))
+        assertTrue(engine.processKey(0xff0d, 0)) // return commits the kana as typed
+        assertEquals("にほん", engine.getCommit())
+
+        // other characters are still left to the keyboard
+        assertFalse(engine.processKey('漢'.code, 0))
+        assertFalse(engine.isComposing())
+        dict.close()
+    }
+
+    @Test
     fun testKanaUtils() {
         assertEquals("ニホン", KanaUtils.hiraganaToKatakana("にほん"))
         assertEquals("トウキョウ", KanaUtils.hiraganaToKatakana("とうきょう"))

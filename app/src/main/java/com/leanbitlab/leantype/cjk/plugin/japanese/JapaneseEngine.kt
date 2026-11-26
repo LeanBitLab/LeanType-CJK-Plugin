@@ -115,6 +115,14 @@ class JapaneseEngine(private val dictionary: JapaneseDictionary) {
             }
         }
 
+        // kana and Japanese punctuation from a kana layout
+        if (keysym in 0..0xFFFF && RomajiConverter.isDirectInput(keysym.toChar())) {
+            rawBuffer.insert(rawCursor, keysym.toChar())
+            rawCursor++
+            updateContext()
+            return true
+        }
+
         return false
     }
 
