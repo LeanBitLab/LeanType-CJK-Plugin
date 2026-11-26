@@ -99,6 +99,9 @@ object RomajiConverter {
         val fullDisplay: String get() = kana + pending
     }
 
+    /** Hiragana and Japanese punctuation, as sent by a kana layout. */
+    fun isDirectInput(c: Char): Boolean = c in 'ぁ'..'ゖ' || c in "ー〜、。？！…「」・"
+
     /**
      * Converts a stream of romaji keystrokes into Hiragana and any trailing pending consonant.
      * @param romaji Raw Latin romaji characters.
@@ -114,6 +117,14 @@ object RomajiConverter {
         var i = 0
         while (i < lower.length) {
             val c = lower[i]
+            // kana typed on a kana layout is already converted: the romaji rules must not see it
+            // (the double consonant rule would turn はは into っは)
+            if (isDirectInput(c)) {
+                kanaBuilder.append(if (buf == "n") "ん" else buf).append(c)
+                buf = ""
+                i++
+                continue
+            }
             buf += c
 
             // 1. Direct match in dictionary table
